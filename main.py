@@ -1,130 +1,121 @@
-import cv2
-from picamera2 import Picamera2
 import time
-import numpy as np
-import movement
-import sys
+import new_movement
+import feed
 
-def clamp(value, mn, mx):
-    if value > mx:
-        return mx
-    elif value < mn:
-        return mn
-    return value
+def clamp(v, mn, mx):
+    return mn if v < mn else mx if v > mx else v
 
-def getSign(n):
+def sign(n):
     return (n > 0) - (n < 0)
 
-if __name__ == "__main__":
-    if len(sys.argv) == 5:
-        base_speed = float(sys.argv[1])  # expects ~0.4 to 0.7
-        kp = float(sys.argv[2])
-        ki = float(sys.argv[3])
-        kd = float(sys.argv[4])
-    else:
-        raise Exception("Usage: python3 line_follow_friend_style.py <base_speed> <kp> <ki> <kd>")
+# ---------------- ROBOT SETTINGS ----------------
 
-picam2 = Picamera2()
-camera_config = picam2.create_video_configuration(main={"size": (640, 480)})
-picam2.configure(camera_config)
-picam2.start()
-time.sleep(2)
+LEFT_BASE_SPEED = 0.70
+RIGHT_BASE_SPEED = 0.70
 
-error = 0.0
-total_error = 0.0
-last_error = 0.0
-diff_error = 0.0
-first = True
+# PID constants
+KP = 1.2
+KI = 0.001
+KD = 0.2
 
-# anti-windup clamp (helps a lot)
+# Anti-windup clamp
 I_CLAMP = 2.0
 
-while True:
-    try:
-        time_marker = time.perf_counter()
+# When line is lost
+SEARCH_TURN = 0.75
 
-        frame = picam2.capture_array()
+# Small error zone
+DEADBAND = 0.02
 
-        roi = frame[240:480, :]  # bottom half
+print("SPACE = start/pause")
+print("Q or ESC = quit (emergency stop)")
 
-        imgray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+# ---------------- INIT ----------------
 
-        ret, thresh = cv2.threshold(
-            imgray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
+feed.init_camera()
 
-        contours, _ = cv2.findContours(thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        im2 = np.zeros((240, 640, 3), dtype=np.uint8)
+running = False
 
-        if len(contours) > 0:
-            contour_areas = [cv2.contourArea(cnt) for cnt in contours]
-            filtered_contours = []
-            filtered_contour_areas = []
+# PID state
+total_error = 0.0
+last_error = 0.0
+first = True
 
-            for i, a in enumerate(contour_areas):
-                if a >= 7500 and a <= 40000:
-                    filtered_contours.append(contours[i])
-                    filtered_contour_areas.append(a)
+try:
+    while True:
+        loop_start = time.perf_counter()
 
-            if len(filtered_contours) > 0 and ret < 180:
-                if len(filtered_contours) > 1:
-                    sorted_pairs = sorted(zip(filtered_contour_areas, filtered_contours), reverse=True)
-                    _, sorted_contours = zip(*sorted_pairs)
-                    line_contour = sorted_contours[0]
-                    cv2.drawContours(im2, sorted_contours[1:], -1, (255, 255, 255), thickness=cv2.FILLED)
-                else:
-                    line_contour = filtered_contours[0]
+        found_line, raw_error_px = feed.get_frame_with_overlay(running)
 
-                cv2.drawContours(im2, [line_contour], -1, (0, 255, 0), thickness=cv2.FILLED)
+        key = feed.cv2.waitKey(1) & 0xFF
 
-                M = cv2.moments(line_contour)
-                if M["m00"] == 0:
-                    continue
+        if key in (27, ord('q')):
+            break
 
-                cx = int(M["m10"] / M["m00"])
-                cv2.line(im2, (cx, 0), (cx, 240), (0, 255, 255), 3)
+        if key == 32:
+            running = not running
+            total_error = 0.0
+            last_error = 0.0
+            first = True
+            print("Running:", running)
 
-                elapsed_time = time.perf_counter() - time_marker
-                if elapsed_time <= 0:
-                    elapsed_time = 0.0001
+        if not running:
+            new_movement.move(0, 0)
+            continue
 
-                # normalized error [-1,1]
-                error = (320 - cx) / 320.0
+        dt = time.perf_counter() - loop_start
+        if dt <= 0:
+            dt = 1e-3
 
-                total_error += error * elapsed_time
-                total_error = clamp(total_error, -I_CLAMP, I_CLAMP)
+        # ---------------- PID ----------------
+        if found_line:
 
-                if not first:
-                    diff_error = (error - last_error) / elapsed_time
-                else:
-                    first = False
+            error = raw_error_px / 320.0
 
-                pid = kp * error + ki * total_error + kd * diff_error
-                last_error = error
+            # smoothing filter
+            error = 0.7 * last_error + 0.3 * error
 
+            if abs(error) < DEADBAND:
+                error = 0.0
+
+            total_error += error * dt
+            total_error = clamp(total_error, -I_CLAMP, I_CLAMP)
+
+            if first:
+                derivative = 0.0
+                first = False
             else:
-                # line lost -> turn toward last seen direction
-                pid = getSign(last_error) * 2.0
-                total_error *= 0.8  # bleed integral when lost (helps recover)
+                derivative = (error - last_error) / dt
 
-            left_pwm = base_speed + pid
-            right_pwm = base_speed - pid
-
-            clamped_left_pwm = clamp(left_pwm, -1, 1)
-            clamped_right_pwm = clamp(right_pwm, -1, 1)
-
-            movement.move(clamped_left_pwm, clamped_right_pwm)
+            pid = KP * error + KI * total_error + KD * derivative
+            last_error = error
 
         else:
-            # no contours at all -> just keep turning toward last direction
-            pid = getSign(last_error) * 2.0
-            movement.move(clamp(base_speed + pid, -1, 1), clamp(base_speed - pid, -1, 1))
+            pid = sign(last_error) * SEARCH_TURN
+            total_error *= 0.8
 
-    except (KeyboardInterrupt, Exception) as e:
-        print(f"Error occurred - {e}")
-        break
+        # ---------------- MOTOR MIXING ----------------
 
-movement.move(0, 0)
-movement.pi.stop()
-picam2.stop()
-picam2.close()
+        left = LEFT_BASE_SPEED - pid
+        right = RIGHT_BASE_SPEED + pid
+
+        left = clamp(left, -1.0, 1.0)
+        right = clamp(right, -1.0, 1.0)
+
+        new_movement.move(left, right)
+
+except KeyboardInterrupt:
+    pass
+
+finally:
+    new_movement.move(0, 0)
+
+    try:
+        new_movement.pi.stop()
+    except:
+        pass
+
+    try:
+        feed.close_camera()
+    except:
+        pass

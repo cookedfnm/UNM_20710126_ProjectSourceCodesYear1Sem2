@@ -3,7 +3,7 @@ import lgpio
 # ----------------- L298N pins (BCM) -----------------
 IN1, IN2, ENA = 17, 27, 18
 IN3, IN4, ENB = 22, 23, 19
-PWM_HZ = 200
+PWM_HZ = 100
 MAX_DUTY = 100.0
 
 hchip = lgpio.gpiochip_open(0)
