@@ -44,7 +44,6 @@ def cleanup():
     finally:
         lgpio.gpiochip_close(hchip)
 
-# compatibility with your friend's shutdown line
 class _PiWrapper:
     def stop(self):
         cleanup()
