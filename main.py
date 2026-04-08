@@ -12,9 +12,9 @@ def sign(n):
 #  ROBOT SETTINGS
 # ════════════════════════════════════════════════════════════════
 
-BASE_SPEED     = 0.3
-APPROACH_SPEED = 0.25
-COLOUR_SPEED   = 0.25
+BASE_SPEED     = 0.25
+APPROACH_SPEED = 0.20
+COLOUR_SPEED   = 0.20
 EXIT_SPEED     = 0.2
 
 KP = 0.4

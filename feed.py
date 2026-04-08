@@ -19,36 +19,51 @@ YELLOW_UPPER = np.array([106, 255, 255], dtype=np.uint8)
 BLACK_THRESHOLD = 100
 
 # ── Area thresholds ───────────────────────────────────────────────
-# Main ROI (bottom 2/3): normal tracking thresholds
-MIN_COLOUR_AREA  = 500    # lowered from 800 — catches colour earlier on sharp turns
-MIN_BLACK_AREA   = 1000
-
-# Lookahead strip (upper thin band): only used for early colour detection,
-# threshold is much lower because the line appears small at distance
-MIN_LOOKAHEAD_AREA = 200
+# Middle-ground starting values for the full-sensor FOV with the camera
+# physically lowered to compensate. Tune up if you get false positives,
+# tune down if line/colour detection drops out.
+#
+# Reference points:
+#   Original cropped FOV:  COLOUR=500  BLACK=1000  LOOKAHEAD=200
+#   Full FOV (camera not lowered): COLOUR=250  BLACK=500   LOOKAHEAD=100
+MIN_COLOUR_AREA    = 350
+MIN_BLACK_AREA     = 750
+MIN_LOOKAHEAD_AREA = 150
 
 
 def init_camera():
     global picam2
     picam2 = Picamera2()
+
+    # ── FOV config: must match collect_data.py ─────────────────
+    # Include a `raw` stream at the FULL sensor resolution so Picamera2
+    # uses the entire sensor area as the source for the downscaled `main`
+    # stream — instead of the default behaviour of cropping to a smaller
+    # sensor sub-region.
+    #
+    # This MUST match collect_data.py so the trained model sees the
+    # same FOV at inference time as it did during training.
+    full_w, full_h = picam2.sensor_resolution
+    print(f"[feed] sensor resolution: {full_w}x{full_h}")
+
     config = picam2.create_preview_configuration(
         main={"size": (640, 480)},
-        controls={"FrameRate": 60}
+        raw={"size": (full_w, full_h)},
+        controls={"FrameRate": 60},
     )
     picam2.configure(config)
+    print(f"[feed] full sensor area → downscaled to 640x480")
+
     picam2.start()
     time.sleep(1)
 
     # ── Windows — tiled left to right ───────────────────────────
-    # Main feed (640x480) at top-left
     cv2.namedWindow("Line Follow PID")
     cv2.moveWindow("Line Follow PID", 0, 0)
 
-    # Mask (ROI) sits to the right of the main feed
     cv2.namedWindow("Mask (ROI)")
     cv2.moveWindow("Mask (ROI)", 660, 0)
 
-    # Lookahead strip sits to the right of Mask
     cv2.namedWindow("Lookahead")
     cv2.moveWindow("Lookahead", 660, 340)
 
@@ -115,8 +130,8 @@ def get_frame_with_overlay(running):
     #              │                      │
     #   H          └──────────────────────┘
     #
-    roi_main      = frame[H // 3 : H,       :]   # expanded from H//2 → H//3
-    roi_lookahead = frame[H // 4 : H // 3,  :]   # thin strip above main ROI
+    roi_main      = frame[H // 3 : H,       :]
+    roi_lookahead = frame[H // 4 : H // 3,  :]
 
     # ── Pre-process main ROI ──────────────────────────────────────
     blurred_main = cv2.GaussianBlur(roi_main, (7, 7), 0)
@@ -163,14 +178,13 @@ def get_frame_with_overlay(running):
 
     active_mode = 'search'
     active_cont = None
-    roi_offset  = H // 3    # y-offset for main ROI drawings
-    look_offset = H // 4    # y-offset for lookahead drawings
+    roi_offset  = H // 3
+    look_offset = H // 4
 
     found_line = False
     error      = 0.0
 
     if colour_mode != 'none':
-        # Colour clearly visible in main ROI — track it normally
         active_mode = colour_mode
         active_cont = colour_cont
         x, y, w_box, h_box = cv2.boundingRect(active_cont)
@@ -183,7 +197,6 @@ def get_frame_with_overlay(running):
         cv2.circle(frame, (line_center, y_full + h_box // 2), 6, COLOUR_MAP[active_mode], -1)
 
     elif look_mode != 'none':
-        # Colour only in lookahead strip — early warning, start steering now
         active_mode = 'lookahead_' + look_mode
         x, y, w_box, h_box = cv2.boundingRect(look_cont)
         line_center = x + w_box // 2
@@ -207,8 +220,8 @@ def get_frame_with_overlay(running):
         cv2.circle(frame, (line_center, y_full + h_box // 2), 6, COLOUR_MAP['black'], -1)
 
     # ── Draw ROI boundary lines on frame for debug ────────────────
-    cv2.line(frame, (0, H // 3), (W, H // 3), (200, 200, 0),  1)   # main ROI top
-    cv2.line(frame, (0, H // 4), (W, H // 4), (200, 100, 0),  1)   # lookahead top
+    cv2.line(frame, (0, H // 3), (W, H // 3), (200, 200, 0),  1)
+    cv2.line(frame, (0, H // 4), (W, H // 4), (200, 100, 0),  1)
     cv2.line(frame, (frame_center, 0), (frame_center, H), (255, 255, 0), 2)
 
     status = "RUNNING" if running else "PAUSED"
