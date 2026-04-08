@@ -1,8 +1,8 @@
 """
-collect_data.py — Pi5 dataset collection for downward-facing camera.
+collect_data.py — Pi dataset collection for downward-facing camera.
 
 Setup assumed:
-    - IMX219 mounted ~20cm above the floor, pointed straight down
+    - IMX219 (or similar) mounted above the floor, pointed straight down
     - Symbols printed in TWO physical sizes (mixed into the same class folder)
     - Symbols sit ON the black line (line runs under/through them)
     - Car positioned over the symbol so it's centred in the camera view
@@ -69,9 +69,21 @@ for name in CLASS_NAMES:
     os.makedirs(os.path.join(DATASET_DIR, name), exist_ok=True)
 
 # ── Camera ──────────────────────────────────────────────────────
+# FOV fix (Option B): include a `raw` stream at the full sensor resolution.
+# This forces Picamera2 to use the entire sensor area as the source for the
+# downscaled `main` stream — instead of the default behaviour of cropping
+# to a smaller sensor sub-region.
 picam2 = Picamera2()
-config = picam2.create_preview_configuration(main={"size": (CAPTURE_W, CAPTURE_H)})
+full_w, full_h = picam2.sensor_resolution
+print(f"[camera] sensor resolution: {full_w}x{full_h}")
+
+config = picam2.create_preview_configuration(
+    main={"size": (CAPTURE_W, CAPTURE_H)},
+    raw={"size": (full_w, full_h)},
+)
 picam2.configure(config)
+print(f"[camera] full sensor area → downscaled to {CAPTURE_W}x{CAPTURE_H}")
+
 picam2.start()
 time.sleep(1)
 
