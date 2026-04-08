@@ -2,7 +2,7 @@ import lgpio
 
 # ----------------- L298N pins (BCM) -----------------
 IN1, IN2, ENA = 17, 27, 18
-IN3, IN4, ENB = 22, 23, 19
+IN3, IN4, ENB = 22, 23, 24   # ENB moved to pin 24
 PWM_HZ = 100
 MAX_DUTY = 100.0
 
@@ -24,13 +24,13 @@ def move(left: float, right: float):
     left/right expected in [-1, +1]
     sign = direction, magnitude = speed
     """
-    left = float(max(-1.0, min(1.0, left)))
+    left  = float(max(-1.0, min(1.0, left)))
     right = float(max(-1.0, min(1.0, right)))
 
-    _set_dir(IN1, IN2, left >= 0)
+    _set_dir(IN1, IN2, left  >= 0)
     _set_dir(IN3, IN4, right >= 0)
 
-    _set_pwm(ENA, abs(left) * MAX_DUTY)
+    _set_pwm(ENA, abs(left)  * MAX_DUTY)
     _set_pwm(ENB, abs(right) * MAX_DUTY)
 
 def stop():
