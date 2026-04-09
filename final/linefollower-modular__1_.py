@@ -5,7 +5,7 @@ Then:  python -m linefollower
 
 Creates:
   linefollower/
-  ├── __init__.py        
+  ├── __init__.py
   ├── __main__.py        ← python -m linefollower
   ├── config.py          ← all tunables, label maps, HSV ranges
   ├── shm.py             ← POSIX SharedMemory frame buffer
@@ -551,11 +551,17 @@ W("symbols.py", '''
     import os
     import cv2
     import numpy as np
-    import face_recognition
     from . import config as cfg
     from .motors import set_motors, stop
     from .shm import read_frame
     from .vision import find_line
+
+    try:
+        import face_recognition
+        FACE_OK = True
+    except ImportError:
+        face_recognition = None
+        FACE_OK = False
 
 
     def handle_symbol(label, pid, shm_arr, frame_lock, color_priority):
@@ -608,6 +614,10 @@ W("symbols.py", '''
 
     def _face_recognition(shm_arr, lock):
         """Face recognition routine — blocks up to 10 s."""
+        if not FACE_OK:
+            print("[FACE] face_recognition not installed, skipping.")
+            return
+
         known_files = [
             ("Colin.jpg",        "Colin Yap"),
             ("Dr. Hermawan.jpg", "Dr. Hermawan"),
