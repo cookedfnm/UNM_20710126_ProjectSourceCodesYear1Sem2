@@ -1,115 +1,156 @@
 #!/usr/bin/env python3
 import time
-from gpiozero import PWMOutputDevice, DigitalOutputDevice
-# =========================
-# L298N PIN CONFIG (BCM)
-# =========================
+from gpiozero import PWMOutputDevice, DigitalOutputDevice, Button
 
-# Enable pins
-ENA = 18   # Front LEFT motor
-ENB = 19   # Front RIGHT motor
-
-# Direction pins
-IN1 = 5    # Front LEFT
+# PIN CONFIG (BCM)
+ENA = 18  # LEFT enable (PWM)
+ENB = 19  # RIGHT enable (PWM)
+IN1 = 5
 IN2 = 6
-IN3 = 16   # Front RIGHT
+IN3 = 16
 IN4 = 26
+ENCL = 17
+ENCR = 27
 
-# Encoders (declared but NOT used)
-ENC_RIGHT = 27
-ENC_LEFT  = 17
+# SETTINGS
+PWM_FREQ = 1000
+MIN_SPEED = 0.0
+MAX_SPEED = 1.0
 
-# =========================
-# CALIBRATION (TIME-BASED)
-# =========================
-TIME_FOR_360 = 1.46   # seconds for full 360° rotation
-TURN_SPEED   = 1.0    # PWM duty cycle (0.0–1.0)
 
-# =========================
-# MOTOR CLASS
-# =========================
-class Motor:
-    def __init__(self, en, in1, in2):
-        self.en = PWMOutputDevice(en, frequency=2000, initial_value=0)
-        self.in1 = DigitalOutputDevice(in1, initial_value=False)
-        self.in2 = DigitalOutputDevice(in2, initial_value=False)
+def clamp(x, lo=MIN_SPEED, hi=MAX_SPEED):
+    return max(lo, min(hi, float(x)))
 
-    def forward(self, speed):
-        self.in1.on()
-        self.in2.off()
-        self.en.value = speed
 
-    def backward(self, speed):
-        self.in1.off()
-        self.in2.on()
-        self.en.value = speed
+# MOTOR SETUP
+ena = PWMOutputDevice(ENA, frequency=PWM_FREQ, initial_value=0)
+enb = PWMOutputDevice(ENB, frequency=PWM_FREQ, initial_value=0)
 
-    def stop(self):
-        self.en.value = 0
-        self.in1.off()
-        self.in2.off()
+in1 = DigitalOutputDevice(IN1, initial_value=False)
+in2 = DigitalOutputDevice(IN2, initial_value=False)
+in3 = DigitalOutputDevice(IN3, initial_value=False)
+in4 = DigitalOutputDevice(IN4, initial_value=False)
 
-# =========================
-# ROTATION FUNCTION
-# =========================
-def rotate(angle_deg, left_motor, right_motor):
-    angle = abs(angle_deg)
-    turn_time = (angle / 360.0) * TIME_FOR_360
+# ENCODERS
+encL = Button(ENCL, pull_up=True, bounce_time=0.001)
+encR = Button(ENCR, pull_up=True, bounce_time=0.001)
 
-    if angle == 0:
-        print("SUCCESS: 0 degree rotation (no movement)")
-        return
+left_count = 0
+right_count = 0
 
-    if angle_deg > 0:
-        # LEFT
-        left_motor.backward(TURN_SPEED)
-        right_motor.forward(TURN_SPEED)
-        direction = "LEFT"
+
+def _inc_left():
+    global left_count
+    left_count += 1
+
+
+def _inc_right():
+    global right_count
+    right_count += 1
+
+
+encL.when_pressed = _inc_left
+encR.when_pressed = _inc_right
+
+
+# MOTOR HELPERS
+def set_left_dir(forward: bool):
+    if forward:
+        in1.on()
+        in2.off()
     else:
-        # RIGHT
-        left_motor.forward(TURN_SPEED)
-        right_motor.backward(TURN_SPEED)
-        direction = "RIGHT"
+        in1.off()
+        in2.on()
 
-    time.sleep(turn_time)
 
-    # AUTO STOP
-    left_motor.stop()
-    right_motor.stop()
+def set_right_dir(forward: bool):
+    if forward:
+        in3.on()
+        in4.off()
+    else:
+        in3.off()
+        in4.on()
 
-    print(f"SUCCESS: Rotated ~{angle:.1f} degrees {direction}")
 
-# =========================
-# MAIN LOOP
-# =========================
+def set_speeds(left_speed: float, right_speed: float):
+    ena.value = clamp(left_speed)
+    enb.value = clamp(right_speed)
+
+
+def stop(brake=False):
+    set_speeds(0, 0)
+    if brake:
+        in1.on()
+        in2.on()
+        in3.on()
+        in4.on()
+    else:
+        in1.off()
+        in2.off()
+        in3.off()
+        in4.off()
+
+
+# MOVES
+def forward(speed=0.7):
+    set_left_dir(True)
+    set_right_dir(True)
+    set_speeds(speed, speed)
+
+
+def backward(speed=0.7):
+    set_left_dir(False)
+    set_right_dir(False)
+    set_speeds(speed, speed)
+
+
+def turn_left(speed=0.7, angle=60):
+    set_left_dir(True)
+    set_right_dir(True)
+    left = speed * (1 - angle / 100.0)
+    right = speed
+    set_speeds(left, right)
+
+
+def turn_right(speed=0.7, angle=60):
+    set_left_dir(True)
+    set_right_dir(True)
+    left = speed
+    right = speed * (1 - angle / 100.0)
+    set_speeds(left, right)
+
+
+def move_for(fn, seconds, *args, **kwargs):
+    global left_count, right_count
+
+    left_count = 0
+    right_count = 0
+
+    start = time.time()
+    fn(*args, **kwargs)
+    time.sleep(seconds)
+    stop()
+
+    dt = time.time() - start
+    print(
+        f"Ran {fn.__name__} for {dt:.2f}s | "
+        f"Encoders: L={left_count} R={right_count} | "
+        f"pulses/s: L={left_count/dt:.1f} R={right_count/dt:.1f}"
+    )
+
+
+# DEMO RUN
 if __name__ == "__main__":
-
-    # Create motors
-    front_left  = Motor(ENA, IN1, IN2)
-    front_right = Motor(ENB, IN3, IN4)
-
-    print("Angle Rotation Program")
-    print("Enter angle in degrees:")
-    print("(positive = LEFT, negative = RIGHT)")
-    print("PRESS q TO QUIT\n")
-
     try:
-        while True:
-            user_input = input("Angle: ").strip().lower()
-
-            if user_input == 'q':
-                front_left.stop()
-                front_right.stop()
-                print("Motors stopped. Exiting.")
-                break
-
-            try:
-                angle = float(user_input)
-                rotate(angle, front_left, front_right)
-            except ValueError:
-                print("Invalid input. Enter a number or q.")
+        move_for(forward, 2.0, speed=0.70)
+        move_for(turn_left, 1.5, speed=0.70, angle=60)
+        move_for(turn_right, 1.5, speed=0.70, angle=60)
+        move_for(backward, 2.0, speed=0.60)
+        stop()
 
     except KeyboardInterrupt:
-        front_left.stop()
-        front_right.stop()
-        print("\nEmergency stop (Ctrl+C)")
+        pass
+
+    finally:
+        stop()
+        print("Done.")
