@@ -19,9 +19,9 @@ MIN_SPEED = 0.0
 MAX_SPEED = 1.0
 
 # ======== DISTANCE CALCULATION PARAMETERS ========
-WHEEL_DIAMETER = 0.065   # meters (measure your wheel)
+WHEEL_DIAMETER = 0.065   # meters
 WHEEL_CIRC = math.pi * WHEEL_DIAMETER   # C = πD
-PULSES_PER_REV = 20      # depends on your encoder
+PULSES_PER_REV = 20    
 
 def clamp(x, lo=MIN_SPEED, hi=MAX_SPEED):
     return max(lo, min(hi, float(x)))
